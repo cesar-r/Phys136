@@ -1,0 +1,232 @@
+# CCD Excercise
+# Gunnar J and Cesar R ##Eclipse##
+# March 30, 2016
+
+# import necessary modules
+    # numpy for basic numerical functions
+import numpy as np
+    # astropy for reading the FITS files
+import astropy.io.fits as fits
+    # matplotlib for plotting
+import matplotlib.pyplot as plt
+    # glob for glob.glob to grab all the FIT files in one go
+import glob
+    # scipy.stats for finding the mode and bin size of the mode of the data
+import scipy.stats as stats
+    # pdb (if not commented out) for debugging
+import pdb
+
+# grab the files from the directory
+global files
+files = glob.glob('*.FIT')
+
+
+# Define the function
+def fitsccd(filenumb):
+    
+    # Open the file
+    hdu = fits.open(files[filenumb])
+    # open the header
+    head = hdu[0].header
+    # grab the exposure time
+    EXPSRTIME = head['EXPTIME']
+    
+    # Gather and sortdata
+    imgdata = hdu[0].data
+    other = list(imgdata.flatten())
+    sortdata = sorted(other)
+    
+    # Find mean, RMS/sigma, min, and max counts
+    MU = np.mean(sortdata)
+    SIGMA = np.std(sortdata)
+    MIN = min(sortdata)
+    MAX = max(sortdata)
+    
+    # Assign a short filename for later use
+    name = files[filenumb][13:17] + files[filenumb][10:12]
+    
+    # If the file is a BIAS file
+    if 'BIAS' in files[filenumb]:
+        MODE = stats.mode(sortdata)[0][0]
+        
+        # Compile modes into a mode array
+        global Maray
+        
+        try:
+            Maray
+        except NameError:
+            Maray = []
+        
+        Maray.append(MODE)
+        
+        # Find the average pixel count per pixel
+        global Avaray
+        
+        try:
+            Avaray
+        except NameError:
+            Avaray = list(np.zeros(350190))
+                
+        Avaray = [x + y for x,y in zip(Avaray, other)]
+        
+        global spec
+        
+        try:
+            spec
+        except NameError:
+            spec = 0
+        
+        spec = spec + 1
+        
+        if 'BIAS' not in files[filenumb + 1]:
+            # Bias is the mean of the modes of each BIAS frame            
+            global BIASLEVEL            
+            BIASLEVEL = np.mean(Maray)
+            # The average pixel count in the BIAS files is calculated into one average BIAS file
+            Avaray = map(lambda x: x / spec, Avaray)
+            # The read noise data is one of the BIAS file's data minus the average of the BIAS files
+            Raray = [x - y for x,y in zip(sortdata, Avaray)]
+            # The read noise is the mode of the read noise data
+            global READNOISE            
+            READNOISE = stats.mode(Raray)[0][0]
+    
+    if 'DARK' in files[filenumb]:
+        # BIAS array        
+        Baray = np.asarray(np.zeros(350190))
+        Baray[:] = BIASLEVEL
+        
+        # Subtract the DARK file array by the BIASLEVEL to get a 'thermal' image
+        betdata = map(lambda x: x - BIASLEVEL, sortdata)    
+        # Force any negative numbers to 0 ## Or should I trim them???
+        betdata = np.clip(betdata, 0, np.max(betdata))
+        # Trim data for cosmic rays
+        # Using Binary search limits the number of loops to 20 maximum.
+        # Set some initial variables
+        first = 0
+        founda = False       
+        newarray = [] 
+        
+        while founda == False:           
+            last = len(betdata) - 1
+            midpoint  = (first + last) // 2            
+            #if midpoint is less than 1001 and the end point is greater than 1001
+            if betdata[midpoint] < 1001 and betdata[-1] >= 1001:
+                # add midpoint and everything before it to newarray
+                newarray.extend(betdata[:midpoint + 1])
+                betdata = betdata[midpoint:]
+            # if midpoint is greater than 1001
+            if betdata[midpoint] >= 1001:
+                # discard midpoint and everything after midpoint
+                betdata = betdata[:midpoint]                
+            # if midpoint is less than 1001 and endpoint is less than 1001
+            elif betdata[midpoint] < 1001 and betdata[-1] < 1001:
+                # add everything left to newarray
+                newarray.extend(betdata)              
+                # betdata is newarray
+                betdata = newarray
+                # and stop the loop
+                founda = True
+                
+        # And now trim the data for the normal data so we have a figure later
+        foundb = False
+        newarray = []      
+        
+        while foundb == False:
+            last = len(sortdata) - 1
+            midpoint  = (first + last) // 2            
+            #if midpoint is less than 1001 and the end point is greater than 1001
+            if sortdata[midpoint] < 1001 and sortdata[-1] >= 1001:
+                # add midpoint and everything before it to newarray
+                newarray.extend(sortdata[:midpoint + 1])
+                sortdata = sortdata[midpoint:]
+            # if midpoint is greater than 1001
+            if sortdata[midpoint] >= 1001:
+                # discard midpoint and everything after midpoint
+                sortdata = sortdata[:midpoint]                
+            # if midpoint is less than 1001 and endpoint is less than 1001
+            elif sortdata[midpoint] < 1001 and sortdata[-1] < 1001:
+                # add everything left to newarray
+                newarray.extend(sortdata)
+                # newdata is newarray
+                sortdata = newarray
+                # establish new mean and rms for the trimmed data
+                MU = np.mean(sortdata)
+                SIGMA = np.std(sortdata)
+                MIN = min(sortdata)
+                MAX = max(sortdata)
+                # and stop the loop
+                foundb = True
+        
+        # mode of this better data is the dark mode
+        DMODE = stats.mode(betdata)[0]
+        MODE = stats.mode(sortdata)[0]
+        # compile the dark modes into an array
+        try:
+            DMaray
+        except NameError:
+            DMaray = []
+        DMaray.append(DMODE)
+        if files[filenumb] == files[-1]:
+            # Dark current/ Dark noise is the average of the Dark Mode array            
+            global DARKCURRENT            
+            DARKCURRENT = np.mean(DMaray)
+        
+    # Assign and plot the images 
+    plt.figure()
+    plt.title(name)
+    plt.gcf().set_size_inches(10,6.25)
+    FITfig = plt.imshow(imgdata, cmap = 'spectral')
+    plt.colorbar()
+    plt.show(FITfig)
+    
+    # Set the bin distribution
+    nbins = 1000
+    # change figure to prevent multiple overlay
+    plt.figure()
+    # Plot the histogram
+    n, bins, patches = plt.hist(sortdata, nbins, normed = True, alpha = 0.5, label = 'Counts', histtype = 'stepfilled')
+    # Plot the mean near the x-axis
+    meanplot = plt.plot(MU, 0.001, 'ro', label = 'Mean')
+    # find the bincount of the mode
+    modecount = stats.mode(sortdata)[1]
+    # establish the x-axis of the rms plot
+    x = np.linspace(MODE - 0.5 * SIGMA, MODE + 0.5 * SIGMA, 25)
+    # establish an array to be changed to a specific value    
+    yaray = np.zeros(25)
+    # change each item in the previous array to a value based off the exposure time and the amount in the mode bin
+    if 'BIAS' not in files[filenumb] or '28' in files[filenumb] or '29' in files[filenumb]:
+        yaray[:] = 0.33 * float(modecount[0]) / len(sortdata)
+    else:
+        yaray[:] = 3 * float(modecount[0]) / len(sortdata)
+    # plot the rms and make it a fun color
+    rmsplot = plt.plot(x, yaray, 'k', label = 'RMS', linewidth = 3)
+    # make a title on the top of the figure to explain the numbers (mean, rms, min, max, and exposure time)
+    title = plt.title(name + ''' 
+    This trial was exposed for '''+ str(EXPSRTIME) + ''' seconds.
+    The mean is ''' + str(np.round(MU, 3)) + ''' counts, RMS is ''' + str(np.round(SIGMA, 3)) + ''' counts.
+    Minimum counts at ''' + str(np.round(MIN)) + ''' counts and maximum counts at ''' + str(np.round(MAX)) + ' counts.')
+    # label the x and y-axes
+    xlbl = plt.xlabel('Number of counts')
+    ylbl = plt.ylabel('Fraction of instances at count value')
+    # change the x-axis value to something reasonable
+    xaxis = plt.xlim(0.5 * MU, 1.5 * MU )
+    # and the y-axis value to something reasonable
+    yaxis = plt.ylim(0, 1.01 * np.max(n))
+    # show the legend
+    legend = plt.legend()
+    # Set the size of the plot
+    graphsize = plt.gcf().set_size_inches(8, 8.5)
+    # save the figure as a pdf
+    plt.savefig(name + '.pdf')
+    # show the plot
+    plt.show()
+       
+# start the function
+for igdex in np.arange(len(files)):
+    fitsccd(igdex)
+
+print('In these trials, I found a Bias level of ~ ' + str(np.round(BIASLEVEL, 3)) + ''' counts,
+a dark current, or dark noise, of ~ ''' + str(np.round(DARKCURRENT, 3)) + ''' counts,
+and a read noise of ~ ''' + str(np.round(READNOISE, 3)) + ' counts.')
+        
+
